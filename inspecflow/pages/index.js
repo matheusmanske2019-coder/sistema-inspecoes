@@ -353,7 +353,7 @@ function LoginScreen() {
         <form className="insp-login-card" onSubmit={entrar}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 22 }}>
             <ShieldCheck size={22} color="#2c5f7c" />
-            <span className="insp-h" style={{ fontSize: 21, fontWeight: 700 }}>InspecFlow</span>
+            <span className="insp-h" style={{ fontSize: 21, fontWeight: 700 }}>Ciclo+10</span>
           </div>
           <h1 className="insp-h" style={{ fontSize: 22, margin: "0 0 4px 0" }}>Acessar sistema</h1>
           <p style={{ color: "var(--ink-soft)", fontSize: 13, margin: "0 0 20px 0" }}>
@@ -424,7 +424,7 @@ function Sidebar({ session, empresas, screen, setScreen, onLogout }) {
 
   return (
     <div className="insp-rail">
-      <div className="insp-rail-brand"><ShieldCheck size={20} /><span>InspecFlow</span></div>
+      <div className="insp-rail-brand"><ShieldCheck size={20} /><span>Ciclo+10</span></div>
       <div className="insp-rail-session">
         <div className="role">{isAdm ? "Administrador" : "Acesso empresa"}</div>
         <div className="name">{isAdm ? "Você" : empresa?.nome}</div>
