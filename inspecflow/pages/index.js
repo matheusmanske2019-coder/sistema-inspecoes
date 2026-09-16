@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   Building2, Users, ClipboardCheck, Table2, Plus, Trash2, Pencil, X, Check,
   Upload, Download, LogOut, ImageIcon, ShieldCheck, CircleAlert, Maximize2,
-  Search, BarChart3, LayoutGrid,
+  Search, BarChart3, LayoutGrid, Eye, EyeOff,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { supabase } from "../lib/supabaseClient";
@@ -353,7 +353,7 @@ function LoginScreen() {
         <form className="insp-login-card" onSubmit={entrar}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 22 }}>
             <ShieldCheck size={22} color="#2c5f7c" />
-            <span className="insp-h" style={{ fontSize: 21, fontWeight: 700 }}>Ciclo+10</span>
+            <span className="insp-h" style={{ fontSize: 21, fontWeight: 700 }}>InspecFlow</span>
           </div>
           <h1 className="insp-h" style={{ fontSize: 22, margin: "0 0 4px 0" }}>Acessar sistema</h1>
           <p style={{ color: "var(--ink-soft)", fontSize: 13, margin: "0 0 20px 0" }}>
@@ -424,7 +424,7 @@ function Sidebar({ session, empresas, screen, setScreen, onLogout }) {
 
   return (
     <div className="insp-rail">
-      <div className="insp-rail-brand"><ShieldCheck size={20} /><span>Ciclo+10</span></div>
+      <div className="insp-rail-brand"><ShieldCheck size={20} /><span>InspecFlow</span></div>
       <div className="insp-rail-session">
         <div className="role">{isAdm ? "Administrador" : "Acesso empresa"}</div>
         <div className="name">{isAdm ? "Você" : empresa?.nome}</div>
@@ -770,10 +770,37 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, inspecoes, reload
 function MinhasInspecoesScreen({ empresaId, empresas, inspetores, inspecoes, getCodigo }) {
   const empresa = empresas.find((e) => e.id === empresaId);
   const minhas = inspecoes.filter((i) => i.empresaId === empresaId).sort((a, b) => b.criadoEm - a.criadoEm);
+
+  function exportarExcel() {
+    const dados = minhas.map((ins) => {
+      const insp = inspetores.find((i) => i.id === ins.inspetorId);
+      return {
+        ID: getCodigo(ins.id),
+        Inspetor: insp?.nome || "",
+        Função: insp?.funcao || "",
+        Tipo: tipoLabel(ins.tipo),
+        Regional: ins.regional,
+        Data: fmtDate(ins.dataInspecao),
+        Hora: ins.horaRegistro,
+        Status: ins.status === "aprovado" ? "Aprovado" : ins.status === "reprovado" ? "Reprovado" : ins.status === "abonado" ? "Abonado" : "Pendente",
+        Justificativa: ins.status === "reprovado" ? ins.justificativa || "" : "—",
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(dados);
+    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Minhas Inspeções");
+    XLSX.writeFile(wb, `minhas_inspecoes_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
   return (
     <div>
       <h1 className="insp-h insp-page-title">Minhas inspeções</h1>
       <p className="insp-page-sub">{empresa?.nome} — histórico completo e status de validação.</p>
+      <div className="insp-toolbar">
+        <div />
+        <button className="insp-btn secondary" onClick={exportarExcel}><Download size={15} /> Exportar Excel</button>
+      </div>
       <div className="insp-card">
         <table className="insp-table">
           <thead><tr><th>ID</th><th>Inspetor</th><th>Função</th><th>Tipo</th><th>Regional</th><th>Data</th><th>Hora</th><th>Status</th><th>Justificativa</th></tr></thead>
@@ -1039,6 +1066,7 @@ function PainelEmpresaScreen({ empresas, inspetores, inspecoes, session, mesesDi
   const [empresaId, setEmpresaId] = useState(isAdm ? (empresas[0]?.id || "") : session.empresaId);
   const [regional, setRegional] = useState("todas");
   const [mes, setMes] = useState(mesesDisponiveis[0]);
+  const [mostrarNomes, setMostrarNomes] = useState(true);
 
   const empresa = empresas.find((e) => e.id === empresaId);
   const stats = useMemo(() => computeEmpresaStats(empresaId, mes, inspetores, inspecoes, regional), [empresaId, mes, regional, inspetores, inspecoes]);
@@ -1105,13 +1133,20 @@ function PainelEmpresaScreen({ empresas, inspetores, inspecoes, session, mesesDi
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 10 }}>
         <div className="insp-card">
+          <div className="insp-toolbar" style={{ padding: "14px 14px 0 14px", marginBottom: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-soft)" }}>Desempenho por inspetor</div>
+            <button className="insp-btn secondary" onClick={() => setMostrarNomes((v) => !v)}>
+              {mostrarNomes ? <EyeOff size={15} /> : <Eye size={15} />} {mostrarNomes ? "Ocultar nomes" : "Mostrar nomes"}
+            </button>
+          </div>
           <table className="insp-table">
-            <thead><tr><th>Função</th><th>Regional</th><th>Ciclo 1 Feito/Meta</th><th>Ciclo 2 Feito/Meta</th><th>Ciclo 3 Feito/Meta</th><th>Eficiência</th></tr></thead>
+            <thead><tr><th>Nome</th><th>Função</th><th>Regional</th><th>Ciclo 1 Feito/Meta</th><th>Ciclo 2 Feito/Meta</th><th>Ciclo 3 Feito/Meta</th><th>Eficiência</th></tr></thead>
             <tbody>
-              {stats.inspetores.length === 0 && <tr><td colSpan={6}><div className="insp-empty">Nenhum inspetor para esse filtro.</div></td></tr>}
+              {stats.inspetores.length === 0 && <tr><td colSpan={7}><div className="insp-empty">Nenhum inspetor para esse filtro.</div></td></tr>}
               {stats.inspetores.map((p) => (
                 <tr key={p.inspetor.id}>
-                  <td style={{ fontWeight: 600 }}>{p.inspetor.funcao}</td><td>{p.inspetor.regional}</td>
+                  <td style={{ fontWeight: 600 }}>{mostrarNomes ? p.inspetor.nome : "•••••••••"}</td>
+                  <td>{p.inspetor.funcao}</td><td>{p.inspetor.regional}</td>
                   {p.ciclos.map((c) => {
                     const ok = c.realizado >= c.metaEfetiva;
                     return <td key={c.ciclo}><span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 600, color: ok ? "var(--good)" : "var(--bad)" }}>{ok ? <Check size={13} /> : <X size={13} />} {c.realizado}/{c.metaEfetiva}</span></td>;
