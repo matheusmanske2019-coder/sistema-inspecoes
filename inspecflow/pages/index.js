@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   Building2, Users, ClipboardCheck, Table2, Plus, Trash2, Pencil, X, Check,
   Upload, Download, LogOut, ImageIcon, ShieldCheck, CircleAlert, Maximize2,
-  Search, BarChart3, LayoutGrid, Eye, EyeOff,
+  Search, BarChart3, LayoutGrid, Eye, EyeOff, Lock,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { supabase } from "../lib/supabaseClient";
@@ -332,6 +332,33 @@ function BarRow({ nome, pct }) {
    Login (Supabase Auth de verdade)
 ---------------------------------------------------------------- */
 
+function PrivacyNotice() {
+  const [visivel, setVisivel] = useState(true);
+  if (!visivel) return null;
+  return (
+    <div style={{
+      position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)",
+      background: "#171b1f", color: "#eef0f1", borderRadius: 10, padding: "16px 44px 16px 18px",
+      maxWidth: 460, width: "calc(100% - 40px)", boxShadow: "0 8px 28px rgba(0,0,0,0.35)", zIndex: 100,
+    }}>
+      <button
+        onClick={() => setVisivel(false)}
+        aria-label="Fechar aviso"
+        style={{ position: "absolute", top: 10, right: 10, background: "none", border: "none", color: "#9aa4ad", cursor: "pointer", padding: 4, display: "flex" }}
+      >
+        <X size={16} />
+      </button>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <Lock size={16} style={{ marginTop: 2, flexShrink: 0, color: "#8FB8D6" }} />
+        <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+          <strong style={{ display: "block", marginBottom: 3, fontSize: 13 }}>Proteção de dados</strong>
+          Cada empresa acessa apenas os próprios dados. As inspeções, inspetores e evidências cadastrados por uma empresa não são expostos nem ficam visíveis para nenhuma outra empresa.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoginScreen() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
@@ -353,7 +380,7 @@ function LoginScreen() {
         <form className="insp-login-card" onSubmit={entrar}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 22 }}>
             <ShieldCheck size={22} color="#2c5f7c" />
-            <span className="insp-h" style={{ fontSize: 21, fontWeight: 700 }}>Cilco+10Flow</span>
+            <span className="insp-h" style={{ fontSize: 21, fontWeight: 700 }}>Ciclo+10 Flow</span>
           </div>
           <h1 className="insp-h" style={{ fontSize: 22, margin: "0 0 4px 0" }}>Acessar sistema</h1>
           <p style={{ color: "var(--ink-soft)", fontSize: 13, margin: "0 0 20px 0" }}>
@@ -374,6 +401,7 @@ function LoginScreen() {
         </form>
         <div className="insp-login-footer">feito por matheus manske</div>
       </div>
+      <PrivacyNotice />
     </div>
   );
 }
@@ -418,13 +446,12 @@ function Sidebar({ session, empresas, screen, setScreen, onLogout }) {
     { key: "inspetores", label: "Meus inspetores", icon: Users },
     { key: "pesquisa", label: "Pesquisar", icon: Search },
     { key: "painel-empresa", label: "Meu painel", icon: LayoutGrid },
-    { key: "painel-geral", label: "Painel geral", icon: BarChart3 },
   ];
   const nav = isAdm ? admNav : empresaNav;
 
   return (
     <div className="insp-rail">
-      <div className="insp-rail-brand"><ShieldCheck size={20} /><span>Ciclo+10Flow</span></div>
+      <div className="insp-rail-brand"><ShieldCheck size={20} /><span>Ciclo+10 Flow</span></div>
       <div className="insp-rail-session">
         <div className="role">{isAdm ? "Administrador" : "Acesso empresa"}</div>
         <div className="name">{isAdm ? "Você" : empresa?.nome}</div>
@@ -1346,7 +1373,7 @@ export default function Home() {
             {screen === "base" && isAdm && <BaseScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} getCodigo={getCodigo} mesesDisponiveis={mesesDisponiveis} />}
             {screen === "pesquisa" && <PesquisaScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} restrictedEmpresaId={isAdm ? null : session.empresaId} getCodigo={getCodigo} />}
             {screen === "painel-empresa" && <PainelEmpresaScreen empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} session={session} mesesDisponiveis={mesesDisponiveis} />}
-            {screen === "painel-geral" && <PainelGeralScreen empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} mesesDisponiveis={mesesDisponiveis} />}
+            {screen === "painel-geral" && isAdm && <PainelGeralScreen empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} mesesDisponiveis={mesesDisponiveis} />}
             {screen === "nova-inspecao" && !isAdm && <NovaInspecaoScreen empresaId={session.empresaId} empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} reload={reload} />}
             {screen === "minhas-inspecoes" && !isAdm && <MinhasInspecoesScreen empresaId={session.empresaId} empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} getCodigo={getCodigo} />}
           </>
