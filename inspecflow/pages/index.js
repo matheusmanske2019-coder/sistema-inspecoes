@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   Building2, Users, ClipboardCheck, Table2, Plus, Trash2, Pencil, X, Check,
   Upload, Download, LogOut, ImageIcon, ShieldCheck, CircleAlert, Maximize2,
-  Search, BarChart3, LayoutGrid, Eye, EyeOff, Lock,
+  Search, BarChart3, LayoutGrid, Eye, EyeOff, Lock, Layers,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { supabase } from "../lib/supabaseClient";
@@ -15,14 +15,17 @@ const MESES_PT = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
 ---------------------------------------------------------------- */
 
 function mapEmpresa(r) {
-  return { id: r.id, nome: r.nome, pontoFocal: r.ponto_focal, login: r.login, equipes: r.equipes, userId: r.user_id };
+  return { id: r.id, nome: r.nome, pontoFocal: r.ponto_focal, login: r.login, userId: r.user_id };
 }
 function mapInspetor(r) {
   return { id: r.id, empresaId: r.empresa_id, nome: r.nome, funcao: r.funcao, regional: r.regional, metaCiclo1: r.meta_ciclo1, metaCiclo2: r.meta_ciclo2, metaCiclo3: r.meta_ciclo3 };
 }
+function mapEquipe(r) {
+  return { id: r.id, empresaId: r.empresa_id, nome: r.nome };
+}
 function mapInspecao(r) {
   return {
-    id: r.id, empresaId: r.empresa_id, inspetorId: r.inspetor_id, regional: r.regional, tipo: r.tipo,
+    id: r.id, empresaId: r.empresa_id, inspetorId: r.inspetor_id, equipeId: r.equipe_id, regional: r.regional, tipo: r.tipo,
     dataInspecao: r.data_inspecao, horaRegistro: (r.hora_registro || "").slice(0, 5),
     evidencia: r.evidencia_url, status: r.status, justificativa: r.justificativa || "",
     criadoEm: new Date(r.created_at).getTime(),
@@ -128,6 +131,28 @@ function computeEmpresaStats(empresaId, mes, inspetoresAll, inspecoesAll, region
   inspecoesDoMes.forEach((x) => { if (statusCounts[x.status] !== undefined) statusCounts[x.status]++; });
 
   return { inspetores: porInspetor, cicloTotais, metaGeral, validoGeral, realizadoGeral, excedentes, eficienciaGeral, semInspecao, comInspecao, statusCounts };
+}
+
+function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regionalFiltro = "todas") {
+  const equipes = equipesAll.filter((e) => e.empresaId === empresaId);
+  const inspecoesDoMes = inspecoesAll.filter((i) =>
+    i.empresaId === empresaId &&
+    i.tipo === "inspecao" &&
+    getMes(i.dataInspecao) === mes &&
+    (regionalFiltro === "todas" || i.regional === regionalFiltro)
+  );
+  const equipesInspecionadasIds = new Set(inspecoesDoMes.map((i) => i.equipeId).filter(Boolean));
+
+  const detalhado = equipes.map((eq) => ({
+    equipe: eq,
+    inspecionada: equipesInspecionadasIds.has(eq.id),
+    qtdInspecoes: inspecoesDoMes.filter((i) => i.equipeId === eq.id).length,
+  }));
+
+  const inspecionadas = detalhado.filter((d) => d.inspecionada).length;
+  const semInspecao = detalhado.length - inspecionadas;
+
+  return { total: equipes.length, inspecionadas, semInspecao, detalhado };
 }
 
 /* ---------------------------------------------------------------
@@ -439,11 +464,13 @@ function Sidebar({ session, empresas, screen, setScreen, onLogout }) {
     { key: "painel-geral", label: "Painel geral", icon: BarChart3 },
     { key: "empresas", label: "Empresas", icon: Building2 },
     { key: "inspetores", label: "Inspetores", icon: Users },
+    { key: "equipes", label: "Equipes", icon: Layers },
   ];
   const empresaNav = [
     { key: "nova-inspecao", label: "Nova inspeção", icon: Plus },
     { key: "minhas-inspecoes", label: "Minhas inspeções", icon: Table2 },
     { key: "inspetores", label: "Meus inspetores", icon: Users },
+    { key: "equipes", label: "Minhas equipes", icon: Layers },
     { key: "pesquisa", label: "Pesquisar", icon: Search },
     { key: "painel-empresa", label: "Meu painel", icon: LayoutGrid },
   ];
@@ -471,16 +498,16 @@ function Sidebar({ session, empresas, screen, setScreen, onLogout }) {
    ADM — Empresas
 ---------------------------------------------------------------- */
 
-function EmpresasScreen({ empresas, inspetores, reload }) {
+function EmpresasScreen({ empresas, inspetores, equipes, reload }) {
   const [modal, setModal] = useState(null);
   const [salvando, setSalvando] = useState(false);
 
-  function openNovo() { setModal({ mode: "novo", data: { nome: "", pontoFocal: "", login: "", equipes: "", userId: "" } }); }
-  function openEditar(emp) { setModal({ mode: "editar", data: { id: emp.id, nome: emp.nome, pontoFocal: emp.pontoFocal, login: emp.login, equipes: String(emp.equipes ?? 0), userId: emp.userId || "" } }); }
+  function openNovo() { setModal({ mode: "novo", data: { nome: "", pontoFocal: "", login: "", userId: "" } }); }
+  function openEditar(emp) { setModal({ mode: "editar", data: { id: emp.id, nome: emp.nome, pontoFocal: emp.pontoFocal, login: emp.login, userId: emp.userId || "" } }); }
 
   async function salvar(data) {
     setSalvando(true);
-    const payload = { nome: data.nome, ponto_focal: data.pontoFocal, login: data.login, equipes: Number(data.equipes) || 0, user_id: data.userId.trim() || null };
+    const payload = { nome: data.nome, ponto_focal: data.pontoFocal, login: data.login, user_id: data.userId.trim() || null };
     if (modal.mode === "novo") await supabase.from("empresas").insert(payload);
     else await supabase.from("empresas").update(payload).eq("id", data.id);
     setSalvando(false); setModal(null); reload();
@@ -500,7 +527,7 @@ function EmpresasScreen({ empresas, inspetores, reload }) {
       </div>
       <div className="insp-card">
         <table className="insp-table">
-          <thead><tr><th>Empresa</th><th>Ponto focal</th><th>Login</th><th>Inspetores</th><th>Equipes a inspecionar</th><th style={{ width: 90 }}></th></tr></thead>
+          <thead><tr><th>Empresa</th><th>Ponto focal</th><th>Login</th><th>Inspetores</th><th>Equipes cadastradas</th><th style={{ width: 90 }}></th></tr></thead>
           <tbody>
             {empresas.map((e) => (
               <tr key={e.id}>
@@ -508,7 +535,7 @@ function EmpresasScreen({ empresas, inspetores, reload }) {
                 <td>{e.pontoFocal}</td>
                 <td>{e.login}</td>
                 <td>{inspetores.filter((i) => i.empresaId === e.id).length}</td>
-                <td>{e.equipes ?? 0}</td>
+                <td>{equipes.filter((eq) => eq.empresaId === e.id).length}</td>
                 <td>
                   <div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
                     <button className="insp-icon-btn" onClick={() => openEditar(e)}><Pencil size={15} /></button>
@@ -527,7 +554,7 @@ function EmpresasScreen({ empresas, inspetores, reload }) {
 
 function EmpresaModal({ modal, salvando, onClose, onSave }) {
   const [form, setForm] = useState(modal.data);
-  const valid = form.nome.trim() && form.pontoFocal.trim() && form.login.trim() && form.equipes !== "";
+  const valid = form.nome.trim() && form.pontoFocal.trim() && form.login.trim();
   return (
     <div className="insp-modal-overlay" onClick={onClose}>
       <div className="insp-modal" onClick={(e) => e.stopPropagation()}>
@@ -536,13 +563,12 @@ function EmpresaModal({ modal, salvando, onClose, onSave }) {
         <div className="insp-field"><label>Ponto focal do processo</label><input className="insp-input" value={form.pontoFocal} onChange={(e) => setForm({ ...form, pontoFocal: e.target.value })} /></div>
         <div className="insp-field"><label>Login de referência</label><input className="insp-input" value={form.login} onChange={(e) => setForm({ ...form, login: e.target.value })} placeholder="usuario.empresa" /></div>
         <div className="insp-field">
-          <label>Quantidade de equipes</label>
-          <input className="insp-input" type="number" min="0" value={form.equipes} onChange={(e) => setForm({ ...form, equipes: e.target.value })} />
-        </div>
-        <div className="insp-field">
           <label>ID do usuário (Supabase Auth)</label>
           <input className="insp-input" value={form.userId} onChange={(e) => setForm({ ...form, userId: e.target.value })} placeholder="cole aqui o UID do usuário desta empresa" />
           <div className="insp-hint">Crie o login em Authentication → Users no Supabase e cole o UID (identificador) dele aqui para vincular.</div>
+        </div>
+        <div className="insp-hint" style={{ marginTop: -4, marginBottom: 14 }}>
+          As equipes da empresa (nomenclatura) são cadastradas na aba "Equipes", pela própria empresa ou pelo ADM.
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
           <button className="insp-btn secondary" onClick={onClose}>Cancelar</button>
@@ -557,7 +583,7 @@ function EmpresaModal({ modal, salvando, onClose, onSave }) {
    Inspetores
 ---------------------------------------------------------------- */
 
-function InspetoresScreen({ inspetores, empresas, restrictedEmpresaId, reload }) {
+function InspetoresScreen({ inspetores, empresas, equipes, restrictedEmpresaId, reload }) {
   const [modal, setModal] = useState(null);
   const [filtroEmpresa, setFiltroEmpresa] = useState(restrictedEmpresaId || "todas");
 
@@ -580,12 +606,12 @@ function InspetoresScreen({ inspetores, empresas, restrictedEmpresaId, reload })
   const alertas = empresasParaAlerta.map((emp) => {
     const seus = inspetores.filter((i) => i.empresaId === emp.id);
     const soma = cycleSums(seus);
-    const equipes = Number(emp.equipes) || 0;
+    const qtdEquipes = equipes.filter((eq) => eq.empresaId === emp.id).length;
     const deficits = [];
-    if (soma.c1 < equipes) deficits.push({ ciclo: 1, atual: soma.c1 });
-    if (soma.c2 < equipes) deficits.push({ ciclo: 2, atual: soma.c2 });
-    if (soma.c3 < equipes) deficits.push({ ciclo: 3, atual: soma.c3 });
-    return { emp, equipes, deficits };
+    if (soma.c1 < qtdEquipes) deficits.push({ ciclo: 1, atual: soma.c1 });
+    if (soma.c2 < qtdEquipes) deficits.push({ ciclo: 2, atual: soma.c2 });
+    if (soma.c3 < qtdEquipes) deficits.push({ ciclo: 3, atual: soma.c3 });
+    return { emp, equipes: qtdEquipes, deficits };
   }).filter((a) => a.deficits.length > 0 && a.equipes > 0);
 
   return (
@@ -678,17 +704,107 @@ function InspetorModal({ modal, empresas, restrictedEmpresaId, onClose, onSave }
 }
 
 /* ---------------------------------------------------------------
+   Equipes
+---------------------------------------------------------------- */
+
+function EquipesScreen({ equipes, empresas, inspecoes, restrictedEmpresaId, reload }) {
+  const [modal, setModal] = useState(null);
+  const [filtroEmpresa, setFiltroEmpresa] = useState(restrictedEmpresaId || "todas");
+
+  const lista = equipes.filter((eq) => restrictedEmpresaId ? eq.empresaId === restrictedEmpresaId : filtroEmpresa === "todas" || eq.empresaId === filtroEmpresa);
+
+  function openNovo() {
+    setModal({ mode: "novo", data: { empresaId: restrictedEmpresaId || empresas[0]?.id || "", nome: "" } });
+  }
+  function openEditar(eq) { setModal({ mode: "editar", data: { ...eq } }); }
+
+  async function salvar(data) {
+    const payload = { empresa_id: data.empresaId, nome: data.nome };
+    if (modal.mode === "novo") await supabase.from("equipes").insert(payload);
+    else await supabase.from("equipes").update(payload).eq("id", data.id);
+    setModal(null); reload();
+  }
+  async function remover(id) {
+    if (inspecoes.some((i) => i.equipeId === id)) { alert("Essa equipe já possui inspeções registradas. Não é possível remover."); return; }
+    if (confirm("Remover esta equipe?")) { await supabase.from("equipes").delete().eq("id", id); reload(); }
+  }
+
+  return (
+    <div>
+      <h1 className="insp-h insp-page-title">{restrictedEmpresaId ? "Minhas equipes" : "Equipes"}</h1>
+      <p className="insp-page-sub">{restrictedEmpresaId ? "Cadastre o nome de cada equipe que deve ser inspecionada." : "Cadastro das equipes de cada empresa, usadas na seleção da equipe inspecionada."}</p>
+      <div className="insp-toolbar">
+        {restrictedEmpresaId ? <div /> : (
+          <select className="insp-select" style={{ width: 220 }} value={filtroEmpresa} onChange={(e) => setFiltroEmpresa(e.target.value)}>
+            <option value="todas">Todas as empresas</option>
+            {empresas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+          </select>
+        )}
+        <button className="insp-btn" onClick={openNovo}><Plus size={15} /> Nova equipe</button>
+      </div>
+      <div className="insp-card">
+        <table className="insp-table">
+          <thead><tr><th>Equipe</th>{!restrictedEmpresaId && <th>Empresa</th>}<th style={{ width: 90 }}></th></tr></thead>
+          <tbody>
+            {lista.length === 0 && <tr><td colSpan={restrictedEmpresaId ? 2 : 3}><div className="insp-empty">Nenhuma equipe cadastrada.</div></td></tr>}
+            {lista.map((eq) => (
+              <tr key={eq.id}>
+                <td style={{ fontWeight: 600 }}>{eq.nome}</td>
+                {!restrictedEmpresaId && <td>{empresas.find((e) => e.id === eq.empresaId)?.nome || "—"}</td>}
+                <td>
+                  <div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
+                    <button className="insp-icon-btn" onClick={() => openEditar(eq)}><Pencil size={15} /></button>
+                    <button className="insp-icon-btn" onClick={() => remover(eq.id)}><Trash2 size={15} /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {modal && <EquipeModal modal={modal} empresas={empresas} restrictedEmpresaId={restrictedEmpresaId} onClose={() => setModal(null)} onSave={salvar} />}
+    </div>
+  );
+}
+
+function EquipeModal({ modal, empresas, restrictedEmpresaId, onClose, onSave }) {
+  const [form, setForm] = useState(modal.data);
+  const valid = form.empresaId && form.nome.trim();
+  return (
+    <div className="insp-modal-overlay" onClick={onClose}>
+      <div className="insp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="insp-modal-head"><h3 className="insp-h">{modal.mode === "novo" ? "Nova equipe" : "Editar equipe"}</h3><button className="insp-icon-btn" onClick={onClose}><X size={18} /></button></div>
+        {!restrictedEmpresaId && (
+          <div className="insp-field"><label>Empresa</label>
+            <select className="insp-select" value={form.empresaId} onChange={(e) => setForm({ ...form, empresaId: e.target.value })}>
+              {empresas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            </select>
+          </div>
+        )}
+        <div className="insp-field"><label>Nome da equipe</label><input className="insp-input" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Ex: Equipe 01, Equipe Centro-Norte..." /></div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+          <button className="insp-btn secondary" onClick={onClose}>Cancelar</button>
+          <button className="insp-btn" disabled={!valid} onClick={() => onSave(form)}>Salvar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    Empresa — Nova inspeção
 ---------------------------------------------------------------- */
 
-function NovaInspecaoScreen({ empresaId, empresas, inspetores, inspecoes, reload }) {
+function NovaInspecaoScreen({ empresaId, empresas, inspetores, equipes, inspecoes, reload }) {
   const empresa = empresas.find((e) => e.id === empresaId);
   const meusInspetores = inspetores.filter((i) => i.empresaId === empresaId);
+  const minhasEquipes = equipes.filter((eq) => eq.empresaId === empresaId);
   const regionais = [...new Set(meusInspetores.map((i) => i.regional))];
 
   const [tipo, setTipo] = useState("inspecao");
   const [regional, setRegional] = useState("");
   const [inspetorId, setInspetorId] = useState("");
+  const [equipeId, setEquipeId] = useState("");
   const [data, setData] = useState("");
   const [arquivo, setArquivo] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -696,7 +812,7 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, inspecoes, reload
   const fileRef = useRef(null);
 
   const inspetoresDaRegional = meusInspetores.filter((i) => i.regional === regional);
-  const valid = regional && inspetorId && data && arquivo;
+  const valid = regional && inspetorId && equipeId && data && arquivo;
 
   function handleFile(e) {
     const file = e.target.files?.[0];
@@ -717,13 +833,13 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, inspecoes, reload
     }
     const now = new Date();
     const { error } = await supabase.from("inspecoes").insert({
-      empresa_id: empresaId, inspetor_id: inspetorId, regional, tipo,
+      empresa_id: empresaId, inspetor_id: inspetorId, equipe_id: equipeId, regional, tipo,
       data_inspecao: data, hora_registro: now.toTimeString().slice(0, 8),
       evidencia_url: evidenciaUrl, status: "pendente",
     });
     if (error) { alert("Erro ao registrar: " + error.message); setEnviando(false); return; }
 
-    setTipo("inspecao"); setRegional(""); setInspetorId(""); setData(""); setArquivo(null); setPreview(null);
+    setTipo("inspecao"); setRegional(""); setInspetorId(""); setEquipeId(""); setData(""); setArquivo(null); setPreview(null);
     if (fileRef.current) fileRef.current.value = "";
     setEnviando(false);
     reload();
@@ -754,6 +870,13 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, inspecoes, reload
             {inspetoresDaRegional.map((i) => <option key={i.id} value={i.id}>{i.nome} — {i.funcao}</option>)}
           </select>
         </div>
+        <div className="insp-field"><label>Equipe inspecionada</label>
+          <select className="insp-select" value={equipeId} onChange={(e) => setEquipeId(e.target.value)} disabled={minhasEquipes.length === 0}>
+            <option value="">{minhasEquipes.length === 0 ? "Cadastre suas equipes primeiro" : "Selecione a equipe"}</option>
+            {minhasEquipes.map((eq) => <option key={eq.id} value={eq.id}>{eq.nome}</option>)}
+          </select>
+          {minhasEquipes.length === 0 && <div className="insp-hint">Vá em "Minhas equipes" para cadastrar o nome de cada equipe antes de registrar a inspeção.</div>}
+        </div>
         <div className="insp-field"><label>Dia da inspeção</label><input className="insp-input" type="date" value={data} onChange={(e) => setData(e.target.value)} /></div>
         <div className="insp-field"><label>Evidência</label>
           <div className="insp-upload-box" onClick={() => fileRef.current?.click()}>
@@ -770,14 +893,16 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, inspecoes, reload
       <h2 className="insp-h" style={{ fontSize: 18, marginBottom: 10 }}>Últimos envios</h2>
       <div className="insp-card">
         <table className="insp-table">
-          <thead><tr><th>Inspetor</th><th>Tipo</th><th>Regional</th><th>Data</th><th>Status</th></tr></thead>
+          <thead><tr><th>Inspetor</th><th>Equipe</th><th>Tipo</th><th>Regional</th><th>Data</th><th>Status</th></tr></thead>
           <tbody>
-            {minhas.length === 0 && <tr><td colSpan={5}><div className="insp-empty">Nenhuma inspeção enviada ainda.</div></td></tr>}
+            {minhas.length === 0 && <tr><td colSpan={6}><div className="insp-empty">Nenhuma inspeção enviada ainda.</div></td></tr>}
             {minhas.map((ins) => {
               const insp = inspetores.find((i) => i.id === ins.inspetorId);
+              const eq = equipes.find((e) => e.id === ins.equipeId);
               return (
                 <tr key={ins.id}>
                   <td style={{ fontWeight: 600 }}>{insp?.nome || "—"}</td>
+                  <td>{eq?.nome || "—"}</td>
                   <td>{tipoLabel(ins.tipo)}</td><td>{ins.regional}</td><td>{fmtDate(ins.dataInspecao)}</td>
                   <td><StatusBadge status={ins.status} /></td>
                 </tr>
@@ -794,17 +919,19 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, inspecoes, reload
    Empresa — Minhas inspeções
 ---------------------------------------------------------------- */
 
-function MinhasInspecoesScreen({ empresaId, empresas, inspetores, inspecoes, getCodigo }) {
+function MinhasInspecoesScreen({ empresaId, empresas, inspetores, equipes, inspecoes, getCodigo }) {
   const empresa = empresas.find((e) => e.id === empresaId);
   const minhas = inspecoes.filter((i) => i.empresaId === empresaId).sort((a, b) => b.criadoEm - a.criadoEm);
 
   function exportarExcel() {
     const dados = minhas.map((ins) => {
       const insp = inspetores.find((i) => i.id === ins.inspetorId);
+      const eq = equipes.find((e) => e.id === ins.equipeId);
       return {
         ID: getCodigo(ins.id),
         Inspetor: insp?.nome || "",
         Função: insp?.funcao || "",
+        Equipe: eq?.nome || "",
         Tipo: tipoLabel(ins.tipo),
         Regional: ins.regional,
         Data: fmtDate(ins.dataInspecao),
@@ -814,7 +941,7 @@ function MinhasInspecoesScreen({ empresaId, empresas, inspetores, inspecoes, get
       };
     });
     const ws = XLSX.utils.json_to_sheet(dados);
-    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 40 }];
+    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 40 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Minhas Inspeções");
     XLSX.writeFile(wb, `minhas_inspecoes_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -830,16 +957,17 @@ function MinhasInspecoesScreen({ empresaId, empresas, inspetores, inspecoes, get
       </div>
       <div className="insp-card">
         <table className="insp-table">
-          <thead><tr><th>ID</th><th>Inspetor</th><th>Função</th><th>Tipo</th><th>Regional</th><th>Data</th><th>Hora</th><th>Status</th><th>Justificativa</th></tr></thead>
+          <thead><tr><th>ID</th><th>Inspetor</th><th>Função</th><th>Equipe</th><th>Tipo</th><th>Regional</th><th>Data</th><th>Hora</th><th>Status</th><th>Justificativa</th></tr></thead>
           <tbody>
-            {minhas.length === 0 && <tr><td colSpan={9}><div className="insp-empty">Nenhuma inspeção registrada.</div></td></tr>}
+            {minhas.length === 0 && <tr><td colSpan={10}><div className="insp-empty">Nenhuma inspeção registrada.</div></td></tr>}
             {minhas.map((ins) => {
               const insp = inspetores.find((i) => i.id === ins.inspetorId);
+              const eq = equipes.find((e) => e.id === ins.equipeId);
               return (
                 <tr key={ins.id}>
                   <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ink-soft)" }}>{getCodigo(ins.id)}</td>
                   <td style={{ fontWeight: 600 }}>{insp?.nome || "—"}</td>
-                  <td>{insp?.funcao || "—"}</td><td>{tipoLabel(ins.tipo)}</td><td>{ins.regional}</td>
+                  <td>{insp?.funcao || "—"}</td><td>{eq?.nome || "—"}</td><td>{tipoLabel(ins.tipo)}</td><td>{ins.regional}</td>
                   <td>{fmtDate(ins.dataInspecao)}</td><td>{ins.horaRegistro}</td>
                   <td><StatusBadge status={ins.status} /></td>
                   <td style={{ color: "var(--ink-soft)" }}>{ins.status === "reprovado" ? ins.justificativa : "—"}</td>
@@ -857,7 +985,7 @@ function MinhasInspecoesScreen({ empresaId, empresas, inspetores, inspecoes, get
    ADM — Validação
 ---------------------------------------------------------------- */
 
-function ValidacaoScreen({ inspecoes, inspetores, empresas, reload }) {
+function ValidacaoScreen({ inspecoes, inspetores, empresas, equipes, reload }) {
   const [justificativaAberta, setJustificativaAberta] = useState(null);
   const [textoJustificativa, setTextoJustificativa] = useState("");
   const [lightbox, setLightbox] = useState(null);
@@ -883,6 +1011,7 @@ function ValidacaoScreen({ inspecoes, inspetores, empresas, reload }) {
       {pendentes.map((ins) => {
         const insp = inspetores.find((i) => i.id === ins.inspetorId);
         const emp = empresas.find((e) => e.id === ins.empresaId);
+        const eq = equipes.find((e) => e.id === ins.equipeId);
         const aberta = justificativaAberta === ins.id;
         return (
           <div className="insp-val-card" key={ins.id}>
@@ -898,6 +1027,7 @@ function ValidacaoScreen({ inspecoes, inspetores, empresas, reload }) {
                 <div className="sub">{emp?.nome} · {insp?.funcao}</div>
                 <div className="insp-val-tags">
                   <span className="insp-tag">Tipo: {tipoLabel(ins.tipo)}</span>
+                  <span className="insp-tag">Equipe: {eq?.nome || "—"}</span>
                   <span className="insp-tag">Regional: {ins.regional}</span>
                   <span className="insp-tag">Data: {fmtDate(ins.dataInspecao)}</span>
                   <span className="insp-tag">Registrado às {ins.horaRegistro}</span>
@@ -933,7 +1063,7 @@ function ValidacaoScreen({ inspecoes, inspetores, empresas, reload }) {
    ADM — Base de inspeções
 ---------------------------------------------------------------- */
 
-function BaseScreen({ inspecoes, inspetores, empresas, getCodigo, mesesDisponiveis }) {
+function BaseScreen({ inspecoes, inspetores, empresas, equipes, getCodigo, mesesDisponiveis }) {
   const [filtroEmpresa, setFiltroEmpresa] = useState("todas");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [filtroMes, setFiltroMes] = useState("todos");
@@ -944,18 +1074,18 @@ function BaseScreen({ inspecoes, inspetores, empresas, getCodigo, mesesDisponive
       .filter((i) => filtroStatus === "todos" || i.status === filtroStatus)
       .filter((i) => filtroMes === "todos" || getMes(i.dataInspecao) === filtroMes)
       .sort((a, b) => b.criadoEm - a.criadoEm)
-      .map((ins) => ({ ins, insp: inspetores.find((i) => i.id === ins.inspetorId), emp: empresas.find((e) => e.id === ins.empresaId) }));
-  }, [inspecoes, inspetores, empresas, filtroEmpresa, filtroStatus, filtroMes]);
+      .map((ins) => ({ ins, insp: inspetores.find((i) => i.id === ins.inspetorId), emp: empresas.find((e) => e.id === ins.empresaId), eq: equipes.find((e) => e.id === ins.equipeId) }));
+  }, [inspecoes, inspetores, empresas, equipes, filtroEmpresa, filtroStatus, filtroMes]);
 
   function exportarExcel() {
-    const dados = linhas.map(({ ins, insp, emp }) => ({
-      ID: getCodigo(ins.id), Empresa: emp?.nome || "", Inspetor: insp?.nome || "", Função: insp?.funcao || "",
+    const dados = linhas.map(({ ins, insp, emp, eq }) => ({
+      ID: getCodigo(ins.id), Empresa: emp?.nome || "", Inspetor: insp?.nome || "", Função: insp?.funcao || "", Equipe: eq?.nome || "",
       Tipo: tipoLabel(ins.tipo), Regional: ins.regional, Data: fmtDate(ins.dataInspecao), Hora: ins.horaRegistro,
       Status: ins.status === "aprovado" ? "Aprovado" : ins.status === "reprovado" ? "Reprovado" : ins.status === "abonado" ? "Abonado" : "Pendente",
       Justificativa: ins.status === "reprovado" ? ins.justificativa || "" : "—",
     }));
     const ws = XLSX.utils.json_to_sheet(dados);
-    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 22 }, { wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 40 }];
+    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 22 }, { wch: 20 }, { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 40 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Inspeções");
     XLSX.writeFile(wb, `base_inspecoes_${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -981,13 +1111,13 @@ function BaseScreen({ inspecoes, inspetores, empresas, getCodigo, mesesDisponive
       </div>
       <div className="insp-card">
         <table className="insp-table">
-          <thead><tr><th>ID</th><th>Inspetor</th><th>Empresa</th><th>Função</th><th>Tipo</th><th>Regional</th><th>Data</th><th>Hora</th><th>Status</th><th>Justificativa</th></tr></thead>
+          <thead><tr><th>ID</th><th>Inspetor</th><th>Empresa</th><th>Função</th><th>Equipe</th><th>Tipo</th><th>Regional</th><th>Data</th><th>Hora</th><th>Status</th><th>Justificativa</th></tr></thead>
           <tbody>
-            {linhas.length === 0 && <tr><td colSpan={10}><div className="insp-empty">Nenhum registro encontrado para esse filtro.</div></td></tr>}
-            {linhas.map(({ ins, insp, emp }) => (
+            {linhas.length === 0 && <tr><td colSpan={11}><div className="insp-empty">Nenhum registro encontrado para esse filtro.</div></td></tr>}
+            {linhas.map(({ ins, insp, emp, eq }) => (
               <tr key={ins.id}>
                 <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--ink-soft)" }}>{getCodigo(ins.id)}</td>
-                <td style={{ fontWeight: 600 }}>{insp?.nome || "—"}</td><td>{emp?.nome || "—"}</td><td>{insp?.funcao || "—"}</td>
+                <td style={{ fontWeight: 600 }}>{insp?.nome || "—"}</td><td>{emp?.nome || "—"}</td><td>{insp?.funcao || "—"}</td><td>{eq?.nome || "—"}</td>
                 <td>{tipoLabel(ins.tipo)}</td><td>{ins.regional}</td><td>{fmtDate(ins.dataInspecao)}</td><td>{ins.horaRegistro}</td>
                 <td><StatusBadge status={ins.status} /></td>
                 <td style={{ color: "var(--ink-soft)" }}>{ins.status === "reprovado" ? ins.justificativa : "—"}</td>
@@ -1004,7 +1134,7 @@ function BaseScreen({ inspecoes, inspetores, empresas, getCodigo, mesesDisponive
    Pesquisar
 ---------------------------------------------------------------- */
 
-function PesquisaScreen({ inspecoes, inspetores, empresas, restrictedEmpresaId, getCodigo }) {
+function PesquisaScreen({ inspecoes, inspetores, empresas, equipes, restrictedEmpresaId, getCodigo }) {
   const [query, setQuery] = useState("");
   const [selecionadaId, setSelecionadaId] = useState(null);
   const [lightbox, setLightbox] = useState(null);
@@ -1017,16 +1147,18 @@ function PesquisaScreen({ inspecoes, inspetores, empresas, restrictedEmpresaId, 
       list = list.filter((ins) => {
         const insp = inspetores.find((i) => i.id === ins.inspetorId);
         const emp = empresas.find((e) => e.id === ins.empresaId);
+        const eq = equipes.find((e) => e.id === ins.equipeId);
         const codigo = getCodigo(ins.id).toLowerCase();
-        return codigo.includes(q) || (insp?.nome || "").toLowerCase().includes(q) || (emp?.nome || "").toLowerCase().includes(q) || ins.regional.toLowerCase().includes(q);
+        return codigo.includes(q) || (insp?.nome || "").toLowerCase().includes(q) || (emp?.nome || "").toLowerCase().includes(q) || (eq?.nome || "").toLowerCase().includes(q) || ins.regional.toLowerCase().includes(q);
       });
     }
     return [...list].sort((a, b) => b.criadoEm - a.criadoEm).slice(0, 40);
-  }, [query, base, inspetores, empresas, getCodigo]);
+  }, [query, base, inspetores, empresas, equipes, getCodigo]);
 
   const insSel = selecionadaId ? inspecoes.find((i) => i.id === selecionadaId) : null;
   const inspSel = insSel ? inspetores.find((i) => i.id === insSel.inspetorId) : null;
   const empSel = insSel ? empresas.find((e) => e.id === insSel.empresaId) : null;
+  const eqSel = insSel ? equipes.find((e) => e.id === insSel.equipeId) : null;
 
   return (
     <div>
@@ -1069,6 +1201,7 @@ function PesquisaScreen({ inspecoes, inspetores, empresas, restrictedEmpresaId, 
               <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 14 }}>{empSel?.nome} · {inspSel?.funcao}</div>
               <div className="insp-detail-grid">
                 <div><div className="lbl">Tipo</div><div className="val">{tipoLabel(insSel.tipo)}</div></div>
+                <div><div className="lbl">Equipe</div><div className="val">{eqSel?.nome || "—"}</div></div>
                 <div><div className="lbl">Regional</div><div className="val">{insSel.regional}</div></div>
                 <div><div className="lbl">Data</div><div className="val">{fmtDate(insSel.dataInspecao)}</div></div>
                 <div><div className="lbl">Hora</div><div className="val">{insSel.horaRegistro}</div></div>
@@ -1088,7 +1221,7 @@ function PesquisaScreen({ inspecoes, inspetores, empresas, restrictedEmpresaId, 
    Painel da empresa
 ---------------------------------------------------------------- */
 
-function PainelEmpresaScreen({ empresas, inspetores, inspecoes, session, mesesDisponiveis }) {
+function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session, mesesDisponiveis }) {
   const isAdm = session.tipo === "adm";
   const [empresaId, setEmpresaId] = useState(isAdm ? (empresas[0]?.id || "") : session.empresaId);
   const [regional, setRegional] = useState("todas");
@@ -1097,6 +1230,10 @@ function PainelEmpresaScreen({ empresas, inspetores, inspecoes, session, mesesDi
 
   const empresa = empresas.find((e) => e.id === empresaId);
   const stats = useMemo(() => computeEmpresaStats(empresaId, mes, inspetores, inspecoes, regional), [empresaId, mes, regional, inspetores, inspecoes]);
+  const cobertura = useMemo(() => computeEquipeCoverage(empresaId, mes, equipes, inspecoes, regional), [empresaId, mes, regional, equipes, inspecoes]);
+  const pctCobertura = cobertura.total > 0 ? Math.round((cobertura.inspecionadas / cobertura.total) * 100) : 0;
+  const donutEquipes = [{ value: cobertura.inspecionadas, color: "var(--good)" }, { value: cobertura.semInspecao, color: "var(--bad)" }];
+  const equipesFaltantes = cobertura.detalhado.filter((d) => !d.inspecionada);
 
   const donutInspetores = [{ value: stats.comInspecao, color: "var(--rail)" }, { value: stats.semInspecao, color: "var(--bad)" }];
   const pctCom = stats.inspetores.length > 0 ? Math.round((stats.comInspecao / stats.inspetores.length) * 100) : 0;
@@ -1156,6 +1293,33 @@ function PainelEmpresaScreen({ empresas, inspetores, inspecoes, session, mesesDi
           const faixa = faixaCiclo(c.pct);
           return <CicloCard key={c.ciclo} titulo={`Ciclo ${c.ciclo} — ${c.ciclo === 1 ? "01 a 10" : c.ciclo === 2 ? "11 a 20" : "21 a 31"}`} faixaLabel={faixa.label} pct={c.pct} meta={c.metaTotal} realizado={c.realizadoTotal} valido={c.validoTotal} color={faixa.color} />;
         })}
+      </div>
+
+      <div className="insp-card" style={{ padding: 18, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-soft)", marginBottom: 4 }}>Cobertura de equipes</div>
+        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 14 }}>Todas as equipes cadastradas devem ser inspecionadas no mês — evite concentrar as inspeções sempre na mesma equipe.</div>
+        {cobertura.total === 0 ? (
+          <div className="insp-empty">Nenhuma equipe cadastrada para esta empresa.</div>
+        ) : (
+          <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <Donut segments={donutEquipes} centerTop={<span style={{ fontSize: 18, fontWeight: 700 }}>{cobertura.total}</span>} centerBottom={<span style={{ fontSize: 10.5, color: "var(--ink-soft)" }}>equipes ({pctCobertura}%)</span>} />
+              <div style={{ marginTop: 12 }}>
+                <Legend items={[{ label: `Inspecionadas (${cobertura.inspecionadas})`, color: "var(--good)" }, { label: `Sem inspeção (${cobertura.semInspecao})`, color: "var(--bad)" }]} />
+              </div>
+            </div>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+                {equipesFaltantes.length > 0 ? "Equipes sem inspeção no mês" : "Todas as equipes foram inspecionadas 🎉"}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {equipesFaltantes.map((d) => (
+                  <span key={d.equipe.id} className="insp-tag" style={{ background: "#fdeaea", color: "var(--bad)" }}>{d.equipe.nome}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 10 }}>
@@ -1306,6 +1470,7 @@ export default function Home() {
   const [screen, setScreen] = useState(null);
   const [empresas, setEmpresas] = useState([]);
   const [inspetores, setInspetores] = useState([]);
+  const [equipes, setEquipes] = useState([]);
   const [inspecoes, setInspecoes] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
 
@@ -1329,13 +1494,15 @@ export default function Home() {
 
   async function reload() {
     setDataLoading(true);
-    const [e, i, ins] = await Promise.all([
+    const [e, i, eq, ins] = await Promise.all([
       supabase.from("empresas").select("*").order("nome"),
       supabase.from("inspetores").select("*"),
+      supabase.from("equipes").select("*").order("nome"),
       supabase.from("inspecoes").select("*"),
     ]);
     setEmpresas((e.data || []).map(mapEmpresa));
     setInspetores((i.data || []).map(mapInspetor));
+    setEquipes((eq.data || []).map(mapEquipe));
     setInspecoes((ins.data || []).map(mapInspecao));
     setDataLoading(false);
   }
@@ -1367,15 +1534,16 @@ export default function Home() {
           <div className="insp-empty">Carregando dados…</div>
         ) : (
           <>
-            {screen === "empresas" && isAdm && <EmpresasScreen empresas={empresas} inspetores={inspetores} reload={reload} />}
-            {screen === "inspetores" && <InspetoresScreen inspetores={inspetores} empresas={empresas} restrictedEmpresaId={isAdm ? null : session.empresaId} reload={reload} />}
-            {screen === "validacao" && isAdm && <ValidacaoScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} reload={reload} />}
-            {screen === "base" && isAdm && <BaseScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} getCodigo={getCodigo} mesesDisponiveis={mesesDisponiveis} />}
-            {screen === "pesquisa" && <PesquisaScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} restrictedEmpresaId={isAdm ? null : session.empresaId} getCodigo={getCodigo} />}
-            {screen === "painel-empresa" && <PainelEmpresaScreen empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} session={session} mesesDisponiveis={mesesDisponiveis} />}
+            {screen === "empresas" && isAdm && <EmpresasScreen empresas={empresas} inspetores={inspetores} equipes={equipes} reload={reload} />}
+            {screen === "inspetores" && <InspetoresScreen inspetores={inspetores} empresas={empresas} equipes={equipes} restrictedEmpresaId={isAdm ? null : session.empresaId} reload={reload} />}
+            {screen === "equipes" && <EquipesScreen equipes={equipes} empresas={empresas} inspecoes={inspecoes} restrictedEmpresaId={isAdm ? null : session.empresaId} reload={reload} />}
+            {screen === "validacao" && isAdm && <ValidacaoScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} equipes={equipes} reload={reload} />}
+            {screen === "base" && isAdm && <BaseScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} equipes={equipes} getCodigo={getCodigo} mesesDisponiveis={mesesDisponiveis} />}
+            {screen === "pesquisa" && <PesquisaScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} equipes={equipes} restrictedEmpresaId={isAdm ? null : session.empresaId} getCodigo={getCodigo} />}
+            {screen === "painel-empresa" && <PainelEmpresaScreen empresas={empresas} inspetores={inspetores} equipes={equipes} inspecoes={inspecoes} session={session} mesesDisponiveis={mesesDisponiveis} />}
             {screen === "painel-geral" && isAdm && <PainelGeralScreen empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} mesesDisponiveis={mesesDisponiveis} />}
-            {screen === "nova-inspecao" && !isAdm && <NovaInspecaoScreen empresaId={session.empresaId} empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} reload={reload} />}
-            {screen === "minhas-inspecoes" && !isAdm && <MinhasInspecoesScreen empresaId={session.empresaId} empresas={empresas} inspetores={inspetores} inspecoes={inspecoes} getCodigo={getCodigo} />}
+            {screen === "nova-inspecao" && !isAdm && <NovaInspecaoScreen empresaId={session.empresaId} empresas={empresas} inspetores={inspetores} equipes={equipes} inspecoes={inspecoes} reload={reload} />}
+            {screen === "minhas-inspecoes" && !isAdm && <MinhasInspecoesScreen empresaId={session.empresaId} empresas={empresas} inspetores={inspetores} equipes={equipes} inspecoes={inspecoes} getCodigo={getCodigo} />}
           </>
         )}
         <div className="insp-footer">feito por matheus manske</div>
