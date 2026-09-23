@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from "react";
 import {
   Building2, Users, ClipboardCheck, Table2, Plus, Trash2, Pencil, X, Check,
   Upload, Download, LogOut, ImageIcon, ShieldCheck, CircleAlert, Maximize2,
-  Search, BarChart3, LayoutGrid, Eye, EyeOff, Lock, Layers,
+  Search, BarChart3, LayoutGrid, Eye, EyeOff, Lock, Layers, Unlock, History,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { supabase } from "../lib/supabaseClient";
@@ -15,7 +15,7 @@ const MESES_PT = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
 ---------------------------------------------------------------- */
 
 function mapEmpresa(r) {
-  return { id: r.id, nome: r.nome, pontoFocal: r.ponto_focal, login: r.login, userId: r.user_id };
+  return { id: r.id, nome: r.nome, pontoFocal: r.ponto_focal, login: r.login, userId: r.user_id, metasLiberadas: !!r.metas_liberadas };
 }
 function mapInspetor(r) {
   return { id: r.id, empresaId: r.empresa_id, nome: r.nome, funcao: r.funcao, regional: r.regional, metaCiclo1: r.meta_ciclo1, metaCiclo2: r.meta_ciclo2, metaCiclo3: r.meta_ciclo3 };
@@ -465,6 +465,7 @@ function Sidebar({ session, empresas, screen, setScreen, onLogout }) {
     { key: "empresas", label: "Empresas", icon: Building2 },
     { key: "inspetores", label: "Inspetores", icon: Users },
     { key: "equipes", label: "Equipes", icon: Layers },
+    { key: "auditoria", label: "Auditoria", icon: History },
   ];
   const empresaNav = [
     { key: "nova-inspecao", label: "Nova inspeção", icon: Plus },
@@ -516,6 +517,10 @@ function EmpresasScreen({ empresas, inspetores, equipes, reload }) {
     if (inspetores.some((i) => i.empresaId === id)) { alert("Essa empresa tem inspetores cadastrados. Remova os inspetores primeiro."); return; }
     if (confirm("Remover esta empresa?")) { await supabase.from("empresas").delete().eq("id", id); reload(); }
   }
+  async function alternarMetas(e) {
+    await supabase.from("empresas").update({ metas_liberadas: !e.metasLiberadas }).eq("id", e.id);
+    reload();
+  }
 
   return (
     <div>
@@ -527,7 +532,7 @@ function EmpresasScreen({ empresas, inspetores, equipes, reload }) {
       </div>
       <div className="insp-card">
         <table className="insp-table">
-          <thead><tr><th>Empresa</th><th>Ponto focal</th><th>Login</th><th>Inspetores</th><th>Equipes cadastradas</th><th style={{ width: 90 }}></th></tr></thead>
+          <thead><tr><th>Empresa</th><th>Ponto focal</th><th>Login</th><th>Inspetores</th><th>Equipes cadastradas</th><th>Edição de metas</th><th style={{ width: 90 }}></th></tr></thead>
           <tbody>
             {empresas.map((e) => (
               <tr key={e.id}>
@@ -536,6 +541,16 @@ function EmpresasScreen({ empresas, inspetores, equipes, reload }) {
                 <td>{e.login}</td>
                 <td>{inspetores.filter((i) => i.empresaId === e.id).length}</td>
                 <td>{equipes.filter((eq) => eq.empresaId === e.id).length}</td>
+                <td>
+                  <button
+                    className="insp-btn secondary"
+                    style={{ padding: "5px 10px", fontSize: 12, color: e.metasLiberadas ? "var(--good)" : "var(--ink-soft)" }}
+                    onClick={() => alternarMetas(e)}
+                    title={e.metasLiberadas ? "A empresa pode editar as metas. Clique para bloquear." : "A empresa não pode editar as metas. Clique para liberar."}
+                  >
+                    {e.metasLiberadas ? <Unlock size={13} /> : <Lock size={13} />} {e.metasLiberadas ? "Liberada" : "Bloqueada"}
+                  </button>
+                </td>
                 <td>
                   <div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
                     <button className="insp-icon-btn" onClick={() => openEditar(e)}><Pencil size={15} /></button>
@@ -584,10 +599,13 @@ function EmpresaModal({ modal, salvando, onClose, onSave }) {
 ---------------------------------------------------------------- */
 
 function InspetoresScreen({ inspetores, empresas, equipes, restrictedEmpresaId, reload }) {
+  const isAdm = !restrictedEmpresaId;
   const [modal, setModal] = useState(null);
   const [filtroEmpresa, setFiltroEmpresa] = useState(restrictedEmpresaId || "todas");
 
   const lista = inspetores.filter((i) => restrictedEmpresaId ? i.empresaId === restrictedEmpresaId : filtroEmpresa === "todas" || i.empresaId === filtroEmpresa);
+  const minhaEmpresa = restrictedEmpresaId ? empresas.find((e) => e.id === restrictedEmpresaId) : null;
+  const metasLiberadas = isAdm || !!minhaEmpresa?.metasLiberadas;
 
   function openNovo() {
     setModal({ mode: "novo", data: { empresaId: restrictedEmpresaId || empresas[0]?.id || "", nome: "", funcao: "", regional: REGIONAIS[0], metaCiclo1: "", metaCiclo2: "", metaCiclo3: "" } });
@@ -618,6 +636,12 @@ function InspetoresScreen({ inspetores, empresas, equipes, restrictedEmpresaId, 
     <div>
       <h1 className="insp-h insp-page-title">{restrictedEmpresaId ? "Meus inspetores" : "Inspetores"}</h1>
       <p className="insp-page-sub">{restrictedEmpresaId ? "Cadastre e gerencie os inspetores da sua empresa, com a meta de cada ciclo." : "Cadastro de inspetores por empresa, com função, regional e meta por ciclo."}</p>
+      {restrictedEmpresaId && !metasLiberadas && (
+        <div className="insp-alert" style={{ marginBottom: 14 }}>
+          <Lock size={15} />
+          <div>A edição de metas dos inspetores existentes está bloqueada nesta fase. Você pode cadastrar novos inspetores normalmente; para alterar a meta de um inspetor já cadastrado, fale com o ADM.</div>
+        </div>
+      )}
       <div className="insp-toolbar">
         {restrictedEmpresaId ? <div /> : (
           <select className="insp-select" style={{ width: 220 }} value={filtroEmpresa} onChange={(e) => setFiltroEmpresa(e.target.value)}>
@@ -653,7 +677,7 @@ function InspetoresScreen({ inspetores, empresas, equipes, restrictedEmpresaId, 
                   <td style={{ fontWeight: 700 }}>{total}</td>
                   <td><div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
                     <button className="insp-icon-btn" onClick={() => openEditar(i)}><Pencil size={15} /></button>
-                    <button className="insp-icon-btn" onClick={() => remover(i.id)}><Trash2 size={15} /></button>
+                    {isAdm && <button className="insp-icon-btn" onClick={() => remover(i.id)}><Trash2 size={15} /></button>}
                   </div></td>
                 </tr>
               );
@@ -661,13 +685,14 @@ function InspetoresScreen({ inspetores, empresas, equipes, restrictedEmpresaId, 
           </tbody>
         </table>
       </div>
-      {modal && <InspetorModal modal={modal} empresas={empresas} restrictedEmpresaId={restrictedEmpresaId} onClose={() => setModal(null)} onSave={salvar} />}
+      {modal && <InspetorModal modal={modal} empresas={empresas} restrictedEmpresaId={restrictedEmpresaId} isAdm={isAdm} metasLiberadas={metasLiberadas} onClose={() => setModal(null)} onSave={salvar} />}
     </div>
   );
 }
 
-function InspetorModal({ modal, empresas, restrictedEmpresaId, onClose, onSave }) {
+function InspetorModal({ modal, empresas, restrictedEmpresaId, isAdm, metasLiberadas, onClose, onSave }) {
   const [form, setForm] = useState(modal.data);
+  const metaTravada = modal.mode === "editar" && !isAdm && !metasLiberadas;
   const valid = form.empresaId && form.nome.trim() && form.funcao.trim() && form.regional && form.metaCiclo1 !== "" && form.metaCiclo2 !== "" && form.metaCiclo3 !== "";
   return (
     <div className="insp-modal-overlay" onClick={onClose}>
@@ -689,10 +714,11 @@ function InspetorModal({ modal, empresas, restrictedEmpresaId, onClose, onSave }
         </div>
         <div className="insp-field"><label>Meta por ciclo</label>
           <div className="insp-grid3">
-            <input className="insp-input" type="number" min="0" placeholder="Ciclo 1" value={form.metaCiclo1} onChange={(e) => setForm({ ...form, metaCiclo1: e.target.value })} />
-            <input className="insp-input" type="number" min="0" placeholder="Ciclo 2" value={form.metaCiclo2} onChange={(e) => setForm({ ...form, metaCiclo2: e.target.value })} />
-            <input className="insp-input" type="number" min="0" placeholder="Ciclo 3" value={form.metaCiclo3} onChange={(e) => setForm({ ...form, metaCiclo3: e.target.value })} />
+            <input className="insp-input" type="number" min="0" placeholder="Ciclo 1" value={form.metaCiclo1} disabled={metaTravada} onChange={(e) => setForm({ ...form, metaCiclo1: e.target.value })} />
+            <input className="insp-input" type="number" min="0" placeholder="Ciclo 2" value={form.metaCiclo2} disabled={metaTravada} onChange={(e) => setForm({ ...form, metaCiclo2: e.target.value })} />
+            <input className="insp-input" type="number" min="0" placeholder="Ciclo 3" value={form.metaCiclo3} disabled={metaTravada} onChange={(e) => setForm({ ...form, metaCiclo3: e.target.value })} />
           </div>
+          {metaTravada && <div className="insp-hint">Edição de meta bloqueada nesta fase. Peça ao ADM para liberar ou alterar.</div>}
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
           <button className="insp-btn secondary" onClick={onClose}>Cancelar</button>
@@ -708,6 +734,7 @@ function InspetorModal({ modal, empresas, restrictedEmpresaId, onClose, onSave }
 ---------------------------------------------------------------- */
 
 function EquipesScreen({ equipes, empresas, inspecoes, restrictedEmpresaId, reload }) {
+  const isAdm = !restrictedEmpresaId;
   const [modal, setModal] = useState(null);
   const [filtroEmpresa, setFiltroEmpresa] = useState(restrictedEmpresaId || "todas");
 
@@ -733,6 +760,12 @@ function EquipesScreen({ equipes, empresas, inspecoes, restrictedEmpresaId, relo
     <div>
       <h1 className="insp-h insp-page-title">{restrictedEmpresaId ? "Minhas equipes" : "Equipes"}</h1>
       <p className="insp-page-sub">{restrictedEmpresaId ? "Cadastre o nome de cada equipe que deve ser inspecionada." : "Cadastro das equipes de cada empresa, usadas na seleção da equipe inspecionada."}</p>
+      {restrictedEmpresaId && (
+        <div className="insp-alert" style={{ marginBottom: 14 }}>
+          <Lock size={15} />
+          <div>Você pode cadastrar novas equipes normalmente. Para remover uma equipe, peça autorização ao ADM.</div>
+        </div>
+      )}
       <div className="insp-toolbar">
         {restrictedEmpresaId ? <div /> : (
           <select className="insp-select" style={{ width: 220 }} value={filtroEmpresa} onChange={(e) => setFiltroEmpresa(e.target.value)}>
@@ -754,7 +787,7 @@ function EquipesScreen({ equipes, empresas, inspecoes, restrictedEmpresaId, relo
                 <td>
                   <div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
                     <button className="insp-icon-btn" onClick={() => openEditar(eq)}><Pencil size={15} /></button>
-                    <button className="insp-icon-btn" onClick={() => remover(eq.id)}><Trash2 size={15} /></button>
+                    {isAdm && <button className="insp-icon-btn" onClick={() => remover(eq.id)}><Trash2 size={15} /></button>}
                   </div>
                 </td>
               </tr>
@@ -1368,6 +1401,86 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
 }
 
 /* ---------------------------------------------------------------
+   Auditoria (ADM)
+---------------------------------------------------------------- */
+
+function acaoLabel(a) {
+  if (a === "insert") return "Criação";
+  if (a === "update") return "Alteração";
+  if (a === "delete") return "Exclusão";
+  return a;
+}
+function tabelaLabel(t) {
+  if (t === "inspetores") return "Inspetor";
+  if (t === "equipes") return "Equipe";
+  if (t === "inspecoes") return "Inspeção";
+  if (t === "empresas") return "Empresa";
+  return t;
+}
+
+function AuditoriaScreen({ empresas }) {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filtroTabela, setFiltroTabela] = useState("todas");
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const { data } = await supabase.from("log_alteracoes").select("*").order("criado_em", { ascending: false }).limit(300);
+      setLogs(data || []);
+      setLoading(false);
+    })();
+  }, []);
+
+  function getAutor(userId) {
+    if (!userId) return "—";
+    const emp = empresas.find((e) => e.userId === userId);
+    if (emp) return emp.nome;
+    return "ADM";
+  }
+  function getNome(dados) {
+    if (!dados) return "—";
+    return dados.nome || dados.regional || "—";
+  }
+
+  const linhas = logs.filter((l) => filtroTabela === "todas" || l.tabela === filtroTabela);
+
+  return (
+    <div>
+      <h1 className="insp-h insp-page-title">Auditoria</h1>
+      <p className="insp-page-sub">Histórico de criações, alterações e exclusões de inspetores, equipes e inspeções — para acompanhar mudanças feitas pelas empresas.</p>
+      <div className="insp-toolbar">
+        <select className="insp-select" style={{ width: 200 }} value={filtroTabela} onChange={(e) => setFiltroTabela(e.target.value)}>
+          <option value="todas">Todos os registros</option>
+          <option value="inspetores">Inspetores</option>
+          <option value="equipes">Equipes</option>
+          <option value="inspecoes">Inspeções</option>
+        </select>
+        <div />
+      </div>
+      <div className="insp-card">
+        <table className="insp-table">
+          <thead><tr><th>Quando</th><th>Quem</th><th>Ação</th><th>Registro</th><th>Item</th></tr></thead>
+          <tbody>
+            {!loading && linhas.length === 0 && <tr><td colSpan={5}><div className="insp-empty">Nenhum registro de auditoria ainda.</div></td></tr>}
+            {loading && <tr><td colSpan={5}><div className="insp-empty">Carregando…</div></td></tr>}
+            {linhas.map((l) => (
+              <tr key={l.id}>
+                <td style={{ whiteSpace: "nowrap" }}>{new Date(l.criado_em).toLocaleString("pt-BR")}</td>
+                <td>{getAutor(l.alterado_por)}</td>
+                <td><span className={`insp-badge ${l.acao === "insert" ? "aprovado" : l.acao === "delete" ? "reprovado" : "pendente"}`}>{acaoLabel(l.acao)}</span></td>
+                <td>{tabelaLabel(l.tabela)}</td>
+                <td>{getNome(l.dados_novos || l.dados_antigos)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    Painel geral
 ---------------------------------------------------------------- */
 
@@ -1537,6 +1650,7 @@ export default function Home() {
             {screen === "empresas" && isAdm && <EmpresasScreen empresas={empresas} inspetores={inspetores} equipes={equipes} reload={reload} />}
             {screen === "inspetores" && <InspetoresScreen inspetores={inspetores} empresas={empresas} equipes={equipes} restrictedEmpresaId={isAdm ? null : session.empresaId} reload={reload} />}
             {screen === "equipes" && <EquipesScreen equipes={equipes} empresas={empresas} inspecoes={inspecoes} restrictedEmpresaId={isAdm ? null : session.empresaId} reload={reload} />}
+            {screen === "auditoria" && isAdm && <AuditoriaScreen empresas={empresas} />}
             {screen === "validacao" && isAdm && <ValidacaoScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} equipes={equipes} reload={reload} />}
             {screen === "base" && isAdm && <BaseScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} equipes={equipes} getCodigo={getCodigo} mesesDisponiveis={mesesDisponiveis} />}
             {screen === "pesquisa" && <PesquisaScreen inspecoes={inspecoes} inspetores={inspetores} empresas={empresas} equipes={equipes} restrictedEmpresaId={isAdm ? null : session.empresaId} getCodigo={getCodigo} />}
