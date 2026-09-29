@@ -21,7 +21,7 @@ function mapInspetor(r) {
   return { id: r.id, empresaId: r.empresa_id, nome: r.nome, funcao: r.funcao, regional: r.regional, metaCiclo1: r.meta_ciclo1, metaCiclo2: r.meta_ciclo2, metaCiclo3: r.meta_ciclo3 };
 }
 function mapEquipe(r) {
-  return { id: r.id, empresaId: r.empresa_id, nome: r.nome };
+  return { id: r.id, empresaId: r.empresa_id, nome: r.nome, criadoEm: r.created_at };
 }
 function mapInspecao(r) {
   return {
@@ -143,11 +143,34 @@ function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regiona
   );
   const equipesInspecionadasIds = new Set(inspecoesDoMes.map((i) => i.equipeId).filter(Boolean));
 
-  const detalhado = equipes.map((eq) => ({
-    equipe: eq,
-    inspecionada: equipesInspecionadasIds.has(eq.id),
-    qtdInspecoes: inspecoesDoMes.filter((i) => i.equipeId === eq.id).length,
-  }));
+  // Dias sem inspeção: conta a partir da última inspeção válida (qualquer mês,
+  // exceto reprovadas) até hoje. Se a equipe nunca foi inspecionada, conta
+  // desde a data em que ela foi cadastrada no sistema.
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const DIA = 86400000;
+  const inspecoesValidasEmpresa = inspecoesAll.filter((i) =>
+    i.empresaId === empresaId &&
+    i.tipo === "inspecao" &&
+    i.status !== "reprovado" &&
+    (regionalFiltro === "todas" || i.regional === regionalFiltro)
+  );
+
+  const detalhado = equipes.map((eq) => {
+    const datas = inspecoesValidasEmpresa.filter((i) => i.equipeId === eq.id).map((i) => i.dataInspecao).sort();
+    const ultima = datas.length ? datas[datas.length - 1] : null;
+    let base;
+    if (ultima) { const [y, m, d] = ultima.split("-").map(Number); base = new Date(y, m - 1, d); }
+    else { base = eq.criadoEm ? new Date(eq.criadoEm) : hoje; base.setHours(0, 0, 0, 0); }
+    const diasSemInspecao = Math.max(0, Math.floor((hoje - base) / DIA));
+    return {
+      equipe: eq,
+      inspecionada: equipesInspecionadasIds.has(eq.id),
+      qtdInspecoes: inspecoesDoMes.filter((i) => i.equipeId === eq.id).length,
+      ultimaInspecao: ultima,
+      nuncaInspecionada: !ultima,
+      diasSemInspecao,
+    };
+  });
 
   const inspecionadas = detalhado.filter((d) => d.inspecionada).length;
   const semInspecao = detalhado.length - inspecionadas;
@@ -1266,7 +1289,7 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
   const cobertura = useMemo(() => computeEquipeCoverage(empresaId, mes, equipes, inspecoes, regional), [empresaId, mes, regional, equipes, inspecoes]);
   const pctCobertura = cobertura.total > 0 ? Math.round((cobertura.inspecionadas / cobertura.total) * 100) : 0;
   const donutEquipes = [{ value: cobertura.inspecionadas, color: "var(--good)" }, { value: cobertura.semInspecao, color: "var(--bad)" }];
-  const equipesFaltantes = cobertura.detalhado.filter((d) => !d.inspecionada);
+  const equipesFaltantes = cobertura.detalhado.filter((d) => !d.inspecionada).sort((a, b) => b.diasSemInspecao - a.diasSemInspecao);
 
   const donutInspetores = [{ value: stats.comInspecao, color: "var(--rail)" }, { value: stats.semInspecao, color: "var(--bad)" }];
   const pctCom = stats.inspetores.length > 0 ? Math.round((stats.comInspecao / stats.inspetores.length) * 100) : 0;
@@ -1345,11 +1368,29 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
               <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
                 {equipesFaltantes.length > 0 ? "Equipes sem inspeção no mês" : "Todas as equipes foram inspecionadas 🎉"}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, rowGap: 12, paddingTop: 4 }}>
                 {equipesFaltantes.map((d) => (
-                  <span key={d.equipe.id} className="insp-tag" style={{ background: "#fdeaea", color: "var(--bad)" }}>{d.equipe.nome}</span>
+                  <span
+                    key={d.equipe.id}
+                    className="insp-tag"
+                    style={{ background: "#fdeaea", color: "var(--bad)", position: "relative", paddingRight: 12 }}
+                    title={d.nuncaInspecionada
+                      ? `Nunca inspecionada — ${d.diasSemInspecao} dia(s) desde o cadastro da equipe`
+                      : `Última inspeção em ${fmtDate(d.ultimaInspecao)} — ${d.diasSemInspecao} dia(s) sem inspeção`}
+                  >
+                    {d.equipe.nome}
+                    <sup style={{ marginLeft: 4, fontSize: 10, fontWeight: 800, background: "var(--bad)", color: "#fff", borderRadius: 100, padding: "1px 6px", verticalAlign: "super" }}>
+                      {d.diasSemInspecao}{d.nuncaInspecionada ? "*" : ""}
+                    </sup>
+                  </span>
                 ))}
               </div>
+              {equipesFaltantes.length > 0 && (
+                <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 12, lineHeight: 1.45 }}>
+                  O número em vermelho ao lado de cada equipe indica <strong>quantos dias ela está sem inspeção</strong>, contados da última inspeção válida até hoje (ordenado do maior para o menor).
+                  {" "}<strong>*</strong> = equipe nunca inspecionada; nesse caso a contagem começa na data em que ela foi cadastrada.
+                </div>
+              )}
             </div>
           </div>
         )}
