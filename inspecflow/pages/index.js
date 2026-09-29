@@ -133,15 +133,23 @@ function computeEmpresaStats(empresaId, mes, inspetoresAll, inspecoesAll, region
   return { inspetores: porInspetor, cicloTotais, metaGeral, validoGeral, realizadoGeral, excedentes, eficienciaGeral, semInspecao, comInspecao, statusCounts };
 }
 
-function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regionalFiltro = "todas") {
+function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regionalFiltro = "todas", cicloFiltro = "todos") {
   const equipes = equipesAll.filter((e) => e.empresaId === empresaId);
-  const inspecoesDoMes = inspecoesAll.filter((i) =>
+  // Inspeções válidas do mês (reprovadas não contam como cobertura)
+  const inspecoesDoMesTodosCiclos = inspecoesAll.filter((i) =>
     i.empresaId === empresaId &&
     i.tipo === "inspecao" &&
+    i.status !== "reprovado" &&
     getMes(i.dataInspecao) === mes &&
     (regionalFiltro === "todas" || i.regional === regionalFiltro)
   );
+  const inspecoesDoMes = cicloFiltro === "todos"
+    ? inspecoesDoMesTodosCiclos
+    : inspecoesDoMesTodosCiclos.filter((i) => getCiclo(i.dataInspecao) === Number(cicloFiltro));
   const equipesInspecionadasIds = new Set(inspecoesDoMes.map((i) => i.equipeId).filter(Boolean));
+  const idsPorCiclo = [1, 2, 3].map((c) => new Set(
+    inspecoesDoMesTodosCiclos.filter((i) => getCiclo(i.dataInspecao) === c).map((i) => i.equipeId).filter(Boolean)
+  ));
 
   // Dias sem inspeção: conta a partir da última inspeção válida (qualquer mês,
   // exceto reprovadas) até hoje. Se a equipe nunca foi inspecionada, conta
@@ -166,6 +174,7 @@ function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regiona
       equipe: eq,
       inspecionada: equipesInspecionadasIds.has(eq.id),
       qtdInspecoes: inspecoesDoMes.filter((i) => i.equipeId === eq.id).length,
+      porCiclo: idsPorCiclo.map((set) => set.has(eq.id)),
       ultimaInspecao: ultima,
       nuncaInspecionada: !ultima,
       diasSemInspecao,
@@ -1286,7 +1295,12 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
 
   const empresa = empresas.find((e) => e.id === empresaId);
   const stats = useMemo(() => computeEmpresaStats(empresaId, mes, inspetores, inspecoes, regional), [empresaId, mes, regional, inspetores, inspecoes]);
-  const cobertura = useMemo(() => computeEquipeCoverage(empresaId, mes, equipes, inspecoes, regional), [empresaId, mes, regional, equipes, inspecoes]);
+  const [mesCobertura, setMesCobertura] = useState(mesesDisponiveis[0]);
+  const [cicloCobertura, setCicloCobertura] = useState("todos");
+  useEffect(() => { setMesCobertura(mes); }, [mes]);
+  const cobertura = useMemo(() => computeEquipeCoverage(empresaId, mesCobertura, equipes, inspecoes, regional, cicloCobertura), [empresaId, mesCobertura, cicloCobertura, regional, equipes, inspecoes]);
+  const equipesOrdenadas = useMemo(() => [...cobertura.detalhado].sort((a, b) => b.diasSemInspecao - a.diasSemInspecao), [cobertura]);
+  const cicloTexto = cicloCobertura === "todos" ? "no mês" : `no ciclo ${cicloCobertura}`;
   const pctCobertura = cobertura.total > 0 ? Math.round((cobertura.inspecionadas / cobertura.total) * 100) : 0;
   const donutEquipes = [{ value: cobertura.inspecionadas, color: "var(--good)" }, { value: cobertura.semInspecao, color: "var(--bad)" }];
   const equipesFaltantes = cobertura.detalhado.filter((d) => !d.inspecionada).sort((a, b) => b.diasSemInspecao - a.diasSemInspecao);
@@ -1352,11 +1366,28 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
       </div>
 
       <div className="insp-card" style={{ padding: 18, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-soft)", marginBottom: 4 }}>Cobertura de equipes</div>
-        <div style={{ fontSize: 12, color: "var(--ink-soft)", marginBottom: 14 }}>Todas as equipes cadastradas devem ser inspecionadas no mês — evite concentrar as inspeções sempre na mesma equipe.</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-soft)", marginBottom: 4 }}>Cobertura de equipes</div>
+            <div style={{ fontSize: 12, color: "var(--ink-soft)" }}>Todas as equipes cadastradas devem ser inspecionadas — evite concentrar as inspeções sempre na mesma equipe.</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select className="insp-select" style={{ width: 150 }} value={mesCobertura} onChange={(e) => setMesCobertura(e.target.value)}>
+              {mesesDisponiveis.map((m) => <option key={m} value={m}>{mesLabel(m)}</option>)}
+            </select>
+            <div className="insp-tabbar">
+              {["todos", "1", "2", "3"].map((c) => (
+                <button key={c} className={cicloCobertura === c ? "active" : ""} onClick={() => setCicloCobertura(c)}>
+                  {c === "todos" ? "MÊS TODO" : `CICLO ${c}`}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
         {cobertura.total === 0 ? (
           <div className="insp-empty">Nenhuma equipe cadastrada para esta empresa.</div>
         ) : (
+          <>
           <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
               <Donut segments={donutEquipes} centerTop={<span style={{ fontSize: 18, fontWeight: 700 }}>{cobertura.total}</span>} centerBottom={<span style={{ fontSize: 10.5, color: "var(--ink-soft)" }}>equipes ({pctCobertura}%)</span>} />
@@ -1366,7 +1397,7 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
             </div>
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
-                {equipesFaltantes.length > 0 ? "Equipes sem inspeção no mês" : "Todas as equipes foram inspecionadas 🎉"}
+                {equipesFaltantes.length > 0 ? `Equipes sem inspeção ${cicloTexto}` : `Todas as equipes foram inspecionadas ${cicloTexto} 🎉`}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, rowGap: 12, paddingTop: 4 }}>
                 {equipesFaltantes.map((d) => (
@@ -1393,6 +1424,56 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
               )}
             </div>
           </div>
+
+          <div style={{ marginTop: 20, borderTop: "1px solid var(--line-soft)", paddingTop: 14 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
+              Comparativo por ciclo — {mesLabel(mesCobertura)}
+            </div>
+            <table className="insp-table">
+              <thead>
+                <tr>
+                  <th>Equipe</th>
+                  {[1, 2, 3].map((c) => (
+                    <th key={c} style={{ textAlign: "center", background: cicloCobertura === String(c) ? "var(--accent-soft)" : undefined }}>
+                      Ciclo {c}<div style={{ fontSize: 10, fontWeight: 500, color: "var(--ink-soft)" }}>{c === 1 ? "01 a 10" : c === 2 ? "11 a 20" : "21 a 31"}</div>
+                    </th>
+                  ))}
+                  <th style={{ textAlign: "center" }}>Ciclos cobertos</th>
+                  <th>Última inspeção</th>
+                  <th style={{ textAlign: "center" }}>Dias sem inspeção</th>
+                </tr>
+              </thead>
+              <tbody>
+                {equipesOrdenadas.map((d) => {
+                  const cobertos = d.porCiclo.filter(Boolean).length;
+                  return (
+                    <tr key={d.equipe.id}>
+                      <td style={{ fontWeight: 600 }}>{d.equipe.nome}</td>
+                      {d.porCiclo.map((ok, idx) => (
+                        <td key={idx} style={{ textAlign: "center", background: cicloCobertura === String(idx + 1) ? "var(--accent-soft)" : undefined }}>
+                          {ok
+                            ? <Check size={16} color="var(--good)" style={{ verticalAlign: "middle" }} />
+                            : <X size={16} color="var(--bad)" style={{ verticalAlign: "middle" }} />}
+                        </td>
+                      ))}
+                      <td style={{ textAlign: "center", fontWeight: 700, color: cobertos === 3 ? "var(--good)" : cobertos === 0 ? "var(--bad)" : "var(--warn)" }}>{cobertos}/3</td>
+                      <td style={{ color: "var(--ink-soft)" }}>{d.ultimaInspecao ? fmtDate(d.ultimaInspecao) : "Nunca"}</td>
+                      <td style={{ textAlign: "center" }}>
+                        <span className="insp-badge" style={{ background: d.diasSemInspecao >= 20 ? "var(--bad-soft)" : d.diasSemInspecao >= 10 ? "var(--warn-soft)" : "var(--good-soft)", color: d.diasSemInspecao >= 20 ? "var(--bad)" : d.diasSemInspecao >= 10 ? "var(--warn)" : "var(--good)" }}>
+                          {d.diasSemInspecao}{d.nuncaInspecionada ? "*" : ""}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 10, lineHeight: 1.45 }}>
+              ✓ = equipe teve ao menos uma inspeção válida naquele ciclo · ✗ = não teve. "Ciclos cobertos" mostra em quantos dos 3 ciclos do mês a equipe foi inspecionada.
+              {" "}"Dias sem inspeção" é contado da última inspeção válida até hoje e <strong>não zera na virada do mês</strong> — verde até 9 dias, amarelo de 10 a 19, vermelho a partir de 20.
+            </div>
+          </div>
+          </>
         )}
       </div>
 
