@@ -1470,7 +1470,7 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
             </table>
             <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 10, lineHeight: 1.45 }}>
               ✓ = equipe teve ao menos uma inspeção válida naquele ciclo · ✗ = não teve. "Ciclos cobertos" mostra em quantos dos 3 ciclos do mês a equipe foi inspecionada.
-              {" "}"Dias sem inspeção" é contado da última inspeção válida até hoje e <strong>não zera na virada do mês</strong> — verde até 9 dias, amarelo de 10 a 19, vermelho a partir de 20.
+              {" "}"Dias sem inspeção" é contado da última inspeção válida até hoje e <strong></strong> — verde até 9 dias, amarelo de 10 a 19, vermelho a partir de 20.
             </div>
           </div>
           </>
