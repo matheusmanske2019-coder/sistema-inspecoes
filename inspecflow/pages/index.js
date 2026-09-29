@@ -1299,7 +1299,6 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
   const [cicloCobertura, setCicloCobertura] = useState("todos");
   useEffect(() => { setMesCobertura(mes); }, [mes]);
   const cobertura = useMemo(() => computeEquipeCoverage(empresaId, mesCobertura, equipes, inspecoes, regional, cicloCobertura), [empresaId, mesCobertura, cicloCobertura, regional, equipes, inspecoes]);
-  const equipesOrdenadas = useMemo(() => [...cobertura.detalhado].sort((a, b) => b.diasSemInspecao - a.diasSemInspecao), [cobertura]);
   const cicloTexto = cicloCobertura === "todos" ? "no mês" : `no ciclo ${cicloCobertura}`;
   const pctCobertura = cobertura.total > 0 ? Math.round((cobertura.inspecionadas / cobertura.total) * 100) : 0;
   const donutEquipes = [{ value: cobertura.inspecionadas, color: "var(--good)" }, { value: cobertura.semInspecao, color: "var(--bad)" }];
@@ -1425,54 +1424,6 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
             </div>
           </div>
 
-          <div style={{ marginTop: 20, borderTop: "1px solid var(--line-soft)", paddingTop: 14 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>
-              Comparativo por ciclo — {mesLabel(mesCobertura)}
-            </div>
-            <table className="insp-table">
-              <thead>
-                <tr>
-                  <th>Equipe</th>
-                  {[1, 2, 3].map((c) => (
-                    <th key={c} style={{ textAlign: "center", background: cicloCobertura === String(c) ? "var(--accent-soft)" : undefined }}>
-                      Ciclo {c}<div style={{ fontSize: 10, fontWeight: 500, color: "var(--ink-soft)" }}>{c === 1 ? "01 a 10" : c === 2 ? "11 a 20" : "21 a 31"}</div>
-                    </th>
-                  ))}
-                  <th style={{ textAlign: "center" }}>Ciclos cobertos</th>
-                  <th>Última inspeção</th>
-                  <th style={{ textAlign: "center" }}>Dias sem inspeção</th>
-                </tr>
-              </thead>
-              <tbody>
-                {equipesOrdenadas.map((d) => {
-                  const cobertos = d.porCiclo.filter(Boolean).length;
-                  return (
-                    <tr key={d.equipe.id}>
-                      <td style={{ fontWeight: 600 }}>{d.equipe.nome}</td>
-                      {d.porCiclo.map((ok, idx) => (
-                        <td key={idx} style={{ textAlign: "center", background: cicloCobertura === String(idx + 1) ? "var(--accent-soft)" : undefined }}>
-                          {ok
-                            ? <Check size={16} color="var(--good)" style={{ verticalAlign: "middle" }} />
-                            : <X size={16} color="var(--bad)" style={{ verticalAlign: "middle" }} />}
-                        </td>
-                      ))}
-                      <td style={{ textAlign: "center", fontWeight: 700, color: cobertos === 3 ? "var(--good)" : cobertos === 0 ? "var(--bad)" : "var(--warn)" }}>{cobertos}/3</td>
-                      <td style={{ color: "var(--ink-soft)" }}>{d.ultimaInspecao ? fmtDate(d.ultimaInspecao) : "Nunca"}</td>
-                      <td style={{ textAlign: "center" }}>
-                        <span className="insp-badge" style={{ background: d.diasSemInspecao >= 20 ? "var(--bad-soft)" : d.diasSemInspecao >= 10 ? "var(--warn-soft)" : "var(--good-soft)", color: d.diasSemInspecao >= 20 ? "var(--bad)" : d.diasSemInspecao >= 10 ? "var(--warn)" : "var(--good)" }}>
-                          {d.diasSemInspecao}{d.nuncaInspecionada ? "*" : ""}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 10, lineHeight: 1.45 }}>
-              ✓ = equipe teve ao menos uma inspeção válida naquele ciclo · ✗ = não teve. "Ciclos cobertos" mostra em quantos dos 3 ciclos do mês a equipe foi inspecionada.
-              {" "}"Dias sem inspeção" é contado da última inspeção válida até hoje e <strong></strong> — verde até 9 dias, amarelo de 10 a 19, vermelho a partir de 20.
-            </div>
-          </div>
           </>
         )}
       </div>
