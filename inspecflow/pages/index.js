@@ -25,7 +25,7 @@ function mapEquipe(r) {
 }
 function mapInspecao(r) {
   return {
-    id: r.id, empresaId: r.empresa_id, inspetorId: r.inspetor_id, equipeId: r.equipe_id, regional: r.regional, tipo: r.tipo,
+    id: r.id, codigo: r.codigo || null, empresaId: r.empresa_id, inspetorId: r.inspetor_id, equipeId: r.equipe_id, regional: r.regional, tipo: r.tipo,
     dataInspecao: r.data_inspecao, horaRegistro: (r.hora_registro || "").slice(0, 5),
     evidencia: r.evidencia_url, status: r.status, justificativa: r.justificativa || "",
     criadoEm: new Date(r.created_at).getTime(),
@@ -42,6 +42,15 @@ function fmtDate(iso) {
   return `${d}/${m}/${y}`;
 }
 function getMes(iso) { return iso ? iso.slice(0, 7) : null; }
+function isoLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+// Período permitido para lançar inspeção/abono: do 1º dia do mês anterior até hoje
+function periodoPermitido() {
+  const hoje = new Date();
+  const minimo = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+  return { min: isoLocal(minimo), max: isoLocal(hoje) };
+}
 function getCiclo(iso) {
   if (!iso) return null;
   const day = Number(iso.split("-")[2]);
@@ -151,6 +160,20 @@ function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regiona
     inspecoesDoMesTodosCiclos.filter((i) => getCiclo(i.dataInspecao) === c).map((i) => i.equipeId).filter(Boolean)
   ));
 
+  // Equipes com abono APROVADO no período escolhido (mês ou ciclo).
+  // O abono não conta como cobertura: a equipe continua "sem inspeção",
+  // só é destacada em azul no card.
+  const equipesAbonadasIds = new Set(
+    inspecoesAll.filter((i) =>
+      i.empresaId === empresaId &&
+      i.tipo === "abono" &&
+      i.status === "abonado" &&
+      getMes(i.dataInspecao) === mes &&
+      (regionalFiltro === "todas" || i.regional === regionalFiltro) &&
+      (cicloFiltro === "todos" || getCiclo(i.dataInspecao) === Number(cicloFiltro))
+    ).map((i) => i.equipeId).filter(Boolean)
+  );
+
   // Dias sem inspeção: conta a partir da última inspeção válida (qualquer mês,
   // exceto reprovadas) até hoje. Se a equipe nunca foi inspecionada, conta
   // desde a data em que ela foi cadastrada no sistema.
@@ -173,6 +196,7 @@ function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regiona
     return {
       equipe: eq,
       inspecionada: equipesInspecionadasIds.has(eq.id),
+      abonada: equipesAbonadasIds.has(eq.id),
       qtdInspecoes: inspecoesDoMes.filter((i) => i.equipeId === eq.id).length,
       porCiclo: idsPorCiclo.map((set) => set.has(eq.id)),
       ultimaInspecao: ultima,
@@ -183,8 +207,9 @@ function computeEquipeCoverage(empresaId, mes, equipesAll, inspecoesAll, regiona
 
   const inspecionadas = detalhado.filter((d) => d.inspecionada).length;
   const semInspecao = detalhado.length - inspecionadas;
+  const semInspecaoComAbono = detalhado.filter((d) => !d.inspecionada && d.abonada).length;
 
-  return { total: equipes.length, inspecionadas, semInspecao, detalhado };
+  return { total: equipes.length, inspecionadas, semInspecao, semInspecaoComAbono, detalhado };
 }
 
 /* ---------------------------------------------------------------
@@ -877,7 +902,9 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, equipes, inspecoe
   const fileRef = useRef(null);
 
   const inspetoresDaRegional = meusInspetores.filter((i) => i.regional === regional);
-  const valid = regional && inspetorId && equipeId && data && arquivo;
+  const periodo = periodoPermitido();
+  const dataForaDoPeriodo = !!data && (data < periodo.min || data > periodo.max);
+  const valid = regional && inspetorId && equipeId && data && !dataForaDoPeriodo && arquivo;
 
   function handleFile(e) {
     const file = e.target.files?.[0];
@@ -887,6 +914,11 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, equipes, inspecoe
   }
 
   async function registrar() {
+    const p = periodoPermitido();
+    if (!data || data < p.min || data > p.max) {
+      alert(`A data precisa estar entre ${fmtDate(p.min)} e ${fmtDate(p.max)}.`);
+      return;
+    }
     setEnviando(true);
     let evidenciaUrl = null;
     if (arquivo) {
@@ -942,7 +974,17 @@ function NovaInspecaoScreen({ empresaId, empresas, inspetores, equipes, inspecoe
           </select>
           {minhasEquipes.length === 0 && <div className="insp-hint">Vá em "Minhas equipes" para cadastrar o nome de cada equipe antes de registrar a inspeção.</div>}
         </div>
-        <div className="insp-field"><label>Dia da inspeção</label><input className="insp-input" type="date" value={data} onChange={(e) => setData(e.target.value)} /></div>
+        <div className="insp-field"><label>Dia da inspeção</label>
+          <input className="insp-input" type="date" min={periodo.min} max={periodo.max} value={data} onChange={(e) => setData(e.target.value)}
+            style={dataForaDoPeriodo ? { borderColor: "var(--bad)" } : undefined} />
+          {dataForaDoPeriodo ? (
+            <div className="insp-hint" style={{ color: "var(--bad)", fontWeight: 600 }}>
+              Data fora do período permitido. Escolha uma data entre {fmtDate(periodo.min)} e {fmtDate(periodo.max)}.
+            </div>
+          ) : (
+            <div className="insp-hint">Permitido de {fmtDate(periodo.min)} até hoje ({fmtDate(periodo.max)}).</div>
+          )}
+        </div>
         <div className="insp-field"><label>Evidência</label>
           <div className="insp-upload-box" onClick={() => fileRef.current?.click()}>
             {preview ? (<><img src={preview} alt="evidência selecionada" /><div style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>{arquivo?.name} — clique para trocar</div></>) : (
@@ -1399,27 +1441,45 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
                 {equipesFaltantes.length > 0 ? `Equipes sem inspeção ${cicloTexto}` : `Todas as equipes foram inspecionadas ${cicloTexto} 🎉`}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, rowGap: 12, paddingTop: 4 }}>
-                {equipesFaltantes.map((d) => (
-                  <span
-                    key={d.equipe.id}
-                    className="insp-tag"
-                    style={{ background: "#fdeaea", color: "var(--bad)", position: "relative", paddingRight: 12 }}
-                    title={d.nuncaInspecionada
-                      ? `Nunca inspecionada — ${d.diasSemInspecao} dia(s) desde o cadastro da equipe`
-                      : `Última inspeção em ${fmtDate(d.ultimaInspecao)} — ${d.diasSemInspecao} dia(s) sem inspeção`}
-                  >
-                    {d.equipe.nome}
-                    <sup style={{ marginLeft: 4, fontSize: 10, fontWeight: 800, background: "var(--bad)", color: "#fff", borderRadius: 100, padding: "1px 6px", verticalAlign: "super" }}>
-                      {d.diasSemInspecao}{d.nuncaInspecionada ? "*" : ""}
-                    </sup>
-                  </span>
-                ))}
+                {equipesFaltantes.map((d) => {
+                  const cor = d.abonada ? "var(--accent)" : "var(--bad)";
+                  const fundo = d.abonada ? "var(--accent-soft)" : "#fdeaea";
+                  const base = d.nuncaInspecionada
+                    ? `Nunca inspecionada — ${d.diasSemInspecao} dia(s) desde o cadastro da equipe`
+                    : `Última inspeção em ${fmtDate(d.ultimaInspecao)} — ${d.diasSemInspecao} dia(s) sem inspeção`;
+                  return (
+                    <span
+                      key={d.equipe.id}
+                      className="insp-tag"
+                      style={{ background: fundo, color: cor, position: "relative", paddingRight: 12 }}
+                      title={d.abonada ? `${base} · Abono aprovado ${cicloTexto}` : base}
+                    >
+                      {d.equipe.nome}
+                      <sup style={{ marginLeft: 4, fontSize: 10, fontWeight: 800, background: cor, color: "#fff", borderRadius: 100, padding: "1px 6px", verticalAlign: "super" }}>
+                        {d.diasSemInspecao}{d.nuncaInspecionada ? "*" : ""}
+                      </sup>
+                    </span>
+                  );
+                })}
               </div>
               {equipesFaltantes.length > 0 && (
-                <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 12, lineHeight: 1.45 }}>
-                  O número em vermelho ao lado de cada equipe indica <strong>quantos dias ela está sem inspeção</strong>, contados da última inspeção válida até hoje (ordenado do maior para o menor).
-                  {" "}<strong>*</strong> = equipe nunca inspecionada; nesse caso a contagem começa na data em que ela foi cadastrada.
-                </div>
+                <>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 11.5, color: "var(--ink-soft)", marginTop: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--bad)", display: "inline-block" }} />
+                      Sem inspeção
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--accent)", display: "inline-block" }} />
+                      Sem inspeção, mas com abono aprovado {cicloTexto}{cobertura.semInspecaoComAbono > 0 ? ` (${cobertura.semInspecaoComAbono})` : ""}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--ink-soft)", marginTop: 8, lineHeight: 1.45 }}>
+                    O número ao lado de cada equipe indica <strong>quantos dias ela está sem inspeção</strong>, contados da última inspeção válida até hoje (ordenado do maior para o menor).
+                    {" "}<strong>*</strong> = equipe nunca inspecionada; nesse caso a contagem começa na data em que ela foi cadastrada.
+                    {" "}O abono não conta como inspeção: a equipe continua sem inspeção, mas a ausência está justificada.
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -1698,7 +1758,9 @@ export default function Home() {
   const codigoMap = useMemo(() => {
     const ordenadas = [...inspecoes].sort((a, b) => a.criadoEm - b.criadoEm);
     const map = {};
-    ordenadas.forEach((ins, idx) => { map[ins.id] = `INSP-${String(idx + 1).padStart(4, "0")}`; });
+    // Usa o código gravado no banco. O cálculo pela ordem só serve de reserva
+    // caso alguma inspeção ainda não tenha código.
+    ordenadas.forEach((ins, idx) => { map[ins.id] = ins.codigo || `INSP-${String(idx + 1).padStart(4, "0")}`; });
     return map;
   }, [inspecoes]);
   const getCodigo = (id) => codigoMap[id] || id;
