@@ -136,8 +136,12 @@ function computeEmpresaStats(empresaId, mes, inspetoresAll, inspecoesAll, region
   const semInspecao = porInspetor.filter((p) => !p.temInspecao).length;
   const comInspecao = porInspetor.length - semInspecao;
 
+  // Status (Aprovado / Abono / Reprovado): somente lançamentos do mês selecionado
+  // e da regional selecionada, para bater com o restante do painel.
   const statusCounts = { aprovado: 0, abonado: 0, reprovado: 0 };
-  inspecoesDoMes.forEach((x) => { if (statusCounts[x.status] !== undefined) statusCounts[x.status]++; });
+  inspecoesDoMes
+    .filter((x) => getMes(x.dataInspecao) === mes && (regionalFiltro === "todas" || x.regional === regionalFiltro))
+    .forEach((x) => { if (statusCounts[x.status] !== undefined) statusCounts[x.status]++; });
 
   return { inspetores: porInspetor, cicloTotais, metaGeral, validoGeral, realizadoGeral, excedentes, eficienciaGeral, semInspecao, comInspecao, statusCounts };
 }
@@ -1522,7 +1526,7 @@ function PainelEmpresaScreen({ empresas, inspetores, equipes, inspecoes, session
           </table>
         </div>
         <div className="insp-card" style={{ padding: 18, display: "flex", flexDirection: "column", alignItems: "center" }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12, textAlign: "center" }}>Abono · Aprovado · Reprovado</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12, textAlign: "center" }}>Abono · Aprovado · Reprovado<div style={{ fontSize: 11, fontWeight: 600, textTransform: "none", letterSpacing: 0, marginTop: 3 }}>{mesLabel(mes)}{regional !== "todas" ? ` · ${regional}` : ""}</div></div>
           <Donut segments={donutStatus} centerTop={<span style={{ fontSize: 18, fontWeight: 700 }}>{totalStatus}</span>} centerBottom={<span style={{ fontSize: 10.5, color: "var(--ink-soft)" }}>registros</span>} />
           <div style={{ marginTop: 14 }}>
             <Legend items={donutStatus.map((s) => ({ label: `${s.label} (${totalStatus > 0 ? Math.round((s.value / totalStatus) * 100) : 0}%)`, color: s.color }))} />
